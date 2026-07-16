@@ -6,6 +6,12 @@ import { MotionValue, useTransform } from "framer-motion";
 const FRAME_COUNT = 192;
 const DESKTOP_BREAKPOINT = 768; // matches Tailwind's md breakpoint
 
+// Mobile connections / browsers choke if you fire 190+ image requests at once.
+// Loading in small concurrent batches is far more reliable on cellular/mobile.
+const MOBILE_CONCURRENCY = 6;
+const DESKTOP_CONCURRENCY = 12;
+const MAX_RETRIES = 2;
+
 interface Props {
   scrollYProgress: MotionValue<number>;
 }
@@ -19,7 +25,8 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
   const currentFrameRef = useRef(0);
   const targetFrameRef = useRef(0);
   const rafRef = useRef<number | null>(null);
-  const loadedCountRef = useRef(0);
+  const loadedCountRef = useRef(0); // successes only
+  const settledCountRef = useRef(0); // successes + permanent failures (drives progress %)
   const lastDrawnRef = useRef(-1);
   const isDesktopRef = useRef(true);
 
@@ -30,38 +37,76 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
     return `/sequence/IMAGE${paddedIndex}.png`;
   };
 
-  // ─── Parallel preload ────────────────────────────────────────────────────────
+  // ─── Load a single frame with retries ───────────────────────────────────────
+  const loadFrame = useCallback((i: number): Promise<void> => {
+    return new Promise((resolve) => {
+      const attempt = (retriesLeft: number) => {
+        const img = new Image();
+        img.decoding = "async";
+        img.onload = () => {
+          imagesRef.current[i] = img;
+          loadedCountRef.current += 1;
+          settledCountRef.current += 1;
+          setLoadedCount(settledCountRef.current);
+          resolve();
+        };
+        img.onerror = () => {
+          if (retriesLeft > 0) {
+            // Small backoff before retrying — helps with transient mobile
+            // network hiccups instead of failing instantly.
+            setTimeout(() => attempt(retriesLeft - 1), 300);
+          } else {
+            console.warn(`[ScrollytellingCanvas] Failed to load frame ${i} after retries:`, img.src);
+            settledCountRef.current += 1;
+            setLoadedCount(settledCountRef.current);
+            resolve();
+          }
+        };
+        img.src = getFramePath(i);
+      };
+      attempt(MAX_RETRIES);
+    });
+  }, []);
+
+  // ─── Concurrency-limited preload ────────────────────────────────────────────
+  const loadAllFrames = useCallback(
+    async (indices: number[], concurrency: number) => {
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(concurrency, indices.length) }, async () => {
+        while (cursor < indices.length) {
+          const i = indices[cursor];
+          cursor += 1;
+          await loadFrame(i);
+        }
+      });
+      await Promise.all(workers);
+    },
+    [loadFrame]
+  );
+
   useEffect(() => {
     imagesRef.current = new Array(FRAME_COUNT).fill(null);
     loadedCountRef.current = 0;
+    settledCountRef.current = 0;
 
-    const loadBatch = (indices: number[]) =>
-      indices.map(
-        (i) =>
-          new Promise<void>((resolve) => {
-            const img = new Image();
-            img.src = getFramePath(i);
-            img.onload = () => {
-              imagesRef.current[i] = img;
-              loadedCountRef.current += 1;
-              setLoadedCount(loadedCountRef.current);
-              resolve();
-            };
-            img.onerror = () => {
-              loadedCountRef.current += 1;
-              setLoadedCount(loadedCountRef.current);
-              resolve();
-            };
-          })
-      );
+    const isMobile = typeof window !== "undefined" && window.innerWidth < DESKTOP_BREAKPOINT;
+    const concurrency = isMobile ? MOBILE_CONCURRENCY : DESKTOP_CONCURRENCY;
 
     const priority = Array.from({ length: 20 }, (_, i) => i);
     const rest = Array.from({ length: FRAME_COUNT - 20 }, (_, i) => i + 20);
 
-    Promise.all(loadBatch(priority)).then(() => {
-      Promise.all(loadBatch(rest));
-    });
-  }, []);
+    let cancelled = false;
+
+    (async () => {
+      await loadAllFrames(priority, concurrency);
+      if (cancelled) return;
+      await loadAllFrames(rest, concurrency);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadAllFrames]);
 
   // ─── Draw frame — CONTAIN on mobile (no crop), COVER on desktop (no gaps) ───
   const drawFrame = useCallback((frameFloat: number) => {
