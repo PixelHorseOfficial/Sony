@@ -1,26 +1,64 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #050505; /* Seamless background for headphones sequence */
+  --foreground: #ffffff; /* pure white */
+  --foreground-muted: rgba(255, 255, 255, 0.6);
+  
+  --color-sony-blue: #0050FF;
+  --color-sony-cyan: #00D6FF;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-inter);
+  
+  --color-sony-blue: var(--color-sony-blue);
+  --color-sony-cyan: var(--color-sony-cyan);
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Utilities for aesthetic touches */
+.glass-nav {
+  background: rgba(5, 5, 5, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.text-gradient {
+  background: linear-gradient(to bottom, #ffffff 40%, var(--color-sony-cyan) 160%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.button-gradient-border {
+  position: relative;
+  border-radius: 9999px;
+  background: #050505;
+  background-clip: padding-box;
+  border: 1px solid transparent;
+}
+
+.button-gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 9999px;
+  z-index: -1;
+  background: linear-gradient(to right, var(--color-sony-blue), var(--color-sony-cyan));
+  opacity: 0.8;
+  transition: opacity 0.3s ease;
+}
+
+.button-gradient-border:hover::before {
+  opacity: 1;
+  box-shadow: 0 0 15px rgba(0, 214, 255, 0.4);
 }
