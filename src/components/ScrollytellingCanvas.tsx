@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { MotionValue, useTransform } from "framer-motion";
 
 const FRAME_COUNT = 192;
+const DESKTOP_BREAKPOINT = 768; // matches Tailwind's md breakpoint
 
 interface Props {
   scrollYProgress: MotionValue<number>;
@@ -20,6 +21,7 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
   const rafRef = useRef<number | null>(null);
   const loadedCountRef = useRef(0);
   const lastDrawnRef = useRef(-1);
+  const isDesktopRef = useRef(true);
 
   const frameIndex = useTransform(scrollYProgress, [0, 1], [0, FRAME_COUNT - 1]);
 
@@ -61,7 +63,7 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
     });
   }, []);
 
-  // ─── Draw frame — TRUE contain, no cropping ─────────────────────────────────
+  // ─── Draw frame — CONTAIN on mobile (no crop), COVER on desktop (no gaps) ───
   const drawFrame = useCallback((frameFloat: number) => {
     const canvas = canvasRef.current;
     const imgs = imagesRef.current;
@@ -74,31 +76,50 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
     const ch = canvas.clientHeight;
     if (cw === 0 || ch === 0) return;
 
+    const useCover = isDesktopRef.current;
+
     const drawOne = (img: HTMLImageElement, alpha = 1) => {
       if (!img?.complete || img.naturalWidth === 0) return false;
 
       const canvasRatio = cw / ch;
       const imgRatio = img.naturalWidth / img.naturalHeight;
 
-      let drawWidth: number, drawHeight: number, dx: number, dy: number;
-      if (canvasRatio > imgRatio) {
-        drawHeight = ch;
-        drawWidth = ch * imgRatio;
-        dx = (cw - drawWidth) / 2;
-        dy = 0;
+      ctx.globalAlpha = alpha;
+
+      if (useCover) {
+        // COVER: fill the entire canvas, crop the source image as needed —
+        // this removes left/right gaps on desktop/tablet.
+        let sx = 0, sy = 0, sWidth = img.naturalWidth, sHeight = img.naturalHeight;
+
+        if (canvasRatio > imgRatio) {
+          // canvas wider than image → crop top/bottom of source
+          sHeight = img.naturalWidth / canvasRatio;
+          sy = (img.naturalHeight - sHeight) / 2;
+        } else {
+          // canvas taller/narrower than image → crop left/right of source
+          sWidth = img.naturalHeight * canvasRatio;
+          sx = (img.naturalWidth - sWidth) / 2;
+        }
+
+        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, cw, ch);
       } else {
-        drawWidth = cw;
-        drawHeight = cw / imgRatio;
-        dx = 0;
-        dy = (ch - drawHeight) / 2;
+        // CONTAIN: fit the whole image inside the canvas, no cropping —
+        // keeps the full headphones visible on narrow mobile screens.
+        let drawWidth: number, drawHeight: number, dx: number, dy: number;
+        if (canvasRatio > imgRatio) {
+          drawHeight = ch;
+          drawWidth = ch * imgRatio;
+          dx = (cw - drawWidth) / 2;
+          dy = 0;
+        } else {
+          drawWidth = cw;
+          drawHeight = cw / imgRatio;
+          dx = 0;
+          dy = (ch - drawHeight) / 2;
+        }
+        ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, dx, dy, drawWidth, drawHeight);
       }
 
-      ctx.globalAlpha = alpha;
-      ctx.drawImage(
-        img,
-        0, 0, img.naturalWidth, img.naturalHeight,
-        dx, dy, drawWidth, drawHeight
-      );
       ctx.globalAlpha = 1;
       return true;
     };
@@ -174,6 +195,8 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
     const cssHeight = wrapper.clientHeight;
     if (cssWidth === 0 || cssHeight === 0) return;
 
+    isDesktopRef.current = window.innerWidth >= DESKTOP_BREAKPOINT;
+
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const targetW = Math.round(cssWidth * dpr);
     const targetH = Math.round(cssHeight * dpr);
@@ -212,13 +235,9 @@ export default function ScrollytellingCanvas({ scrollYProgress }: Props) {
   const loadPercent = Math.round((loadedCount / FRAME_COUNT) * 100);
   const isReady = loadedCount >= 20;
 
-  // ── NO internal height wrapper — page.tsx's 700vh div owns the scroll height ──
   return (
     <div className="sticky top-0 w-full h-[100svh] overflow-hidden flex items-center justify-center bg-[#050505]">
-      <div
-        ref={wrapperRef}
-        className="relative w-full h-full"
-      >
+      <div ref={wrapperRef} className="relative w-full h-full">
         <canvas
           ref={canvasRef}
           style={{
